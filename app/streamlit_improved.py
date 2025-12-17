@@ -143,7 +143,18 @@ def analyze_project(df, parameters):
 def display_results(report, delay_engine, cost_engine):
     """Display analysis results with ExecutiveSummary recommendations based on REAL project data."""
     
+    st.markdown('<div class="section-header">Analysis Results</div>', unsafe_allow_html=True)def display_results(report, delay_engine, cost_engine):
+    """Display analysis results with ExecutiveSummary recommendations based on REAL project data."""
+    
     st.markdown('<div class="section-header">Analysis Results</div>', unsafe_allow_html=True)
+    
+    # DEBUG - Add these lines:
+    st.write("DEBUG - delay_engine.df:", delay_engine.df.shape if delay_engine.df is not None else "None")
+    if delay_engine.df is not None and len(delay_engine.df) > 0:
+        st.write("DEBUG - First project type:", delay_engine.df.iloc[0].get('project_type'))
+        st.write("DEBUG - First project location:", delay_engine.df.iloc[0].get('location'))
+    
+    # Rest of function continues...
     
     # Key metrics
     col1, col2, col3 = st.columns(3)
