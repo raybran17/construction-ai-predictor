@@ -1,386 +1,348 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from datetime import datetime
-import warnings
-warnings.filterwarnings('ignore')
 
-class EnhancedDelayEngine:
+
+class DelayEngineV2:
     """
-    Enhanced Delay Analysis Engine with Phase-Level Breakdown
-    
-    Outputs:
-    - Total delay prediction
-    - Breakdown by project phase
-    - Root cause analysis
-    - Worker allocation impact
+    Delay prediction engine for construction projects.
+    Analyzes historical project data to identify delay patterns and risk factors.
     """
-    
+
     def __init__(self):
         self.scalers = {}
         self.encoders = {}
         self.feature_names = []
-        self.phase_delays = {}
-        self.delay_drivers = {}
-    
-    def process(self, standardized_df):
-        """Process data and create delay analysis with phase breakdown."""
-        print("\n" + "⏱️  "+"="*68)
-        print("ENHANCED DELAY ENGINE - Phase-Level Analysis")
-        print("="*70)
-        
-        self.df = standardized_df.copy()
-        
+        self.df = None
+
+    def process(self, df):
+        """Process input dataframe and prepare features for modeling."""
+        print("\n" + "=" * 60)
+        print("DELAY ENGINE V2 - Core Delay Prediction")
+        print("=" * 60)
+
+        self.df = df.copy()
         self._create_delay_features()
-        self._analyze_phases()
         self._encode_categoricals()
         self._scale_features()
         self._select_features()
-        
-        print("="*70)
-        print(f"✅ Delay engine complete - {self.X.shape[1]} features + phase analysis")
-        print("="*70)
-        
+
+        print(f"Delay engine processed {self.df.shape[0]} projects")
         return self
-    
+
     def _create_delay_features(self):
-        """Create delay-specific features."""
-        print("\n📊 Engineering delay features...")
-        
-        # Weather impact
-        if 'rain_days' in self.df.columns and 'planned_duration' in self.df.columns:
-            self.df['weather_impact_ratio'] = self.df['rain_days'] / (self.df['planned_duration'] + 1)
-        
-        # Material risk
-        if 'material_delay_days' in self.df.columns and 'supplier_reliability' in self.df.columns:
-            self.df['material_risk_score'] = (
-                self.df['material_delay_days'] * (100 - self.df['supplier_reliability']) / 100
-            )
-        
-        # Worker efficiency
-        if 'crew_size' in self.df.columns:
-            self.df['crew_efficiency_score'] = np.where(
-                self.df['crew_size'] > 40, 1.0,
-                np.where(self.df['crew_size'] > 25, 0.85, 0.7)
-            )
-            self.df['worker_shortage_risk'] = np.where(
-                self.df['crew_size'] < 25, 1, 0
-            )
-        
-        # Total external delays
-        delay_cols = [col for col in self.df.columns if 'delay' in col.lower() and col != 'project_delay_days']
-        if delay_cols:
-            self.df['total_external_delays'] = self.df[delay_cols].sum(axis=1)
-        
-        print(f"  ✓ Created delay-specific features")
-    
-    def _analyze_phases(self):
-        """Analyze delays by project phase."""
-        print("\n🔍 Analyzing project phases...")
-        
-        # Estimate phase delays based on project characteristics
-        for idx in self.df.index:
-            phases = {}
-            
-            total_delay = self.df.loc[idx, 'project_delay_days'] if 'project_delay_days' in self.df.columns else 0
-            
-            # Foundation phase (30% of typical delays)
-            material_delay = self.df.loc[idx, 'material_delay_days'] if 'material_delay_days' in self.df.columns else 0
-            phases['foundation'] = {
-                'delay_days': int(material_delay * 0.6 + total_delay * 0.3),
-                'drivers': ['Material delays', 'Inspection waits']
-            }
-            
-            # Framing phase (40% of typical delays)
-            crew_size = self.df.loc[idx, 'crew_size'] if 'crew_size' in self.df.columns else 30
-            crew_delay = 5 if crew_size < 25 else 0
-            phases['framing'] = {
-                'delay_days': int(crew_delay + total_delay * 0.4),
-                'drivers': ['Worker shortage', 'Equipment delays'] if crew_size < 25 else ['Weather delays']
-            }
-            
-            # Finishing phase (30% of typical delays)
-            phases['finishing'] = {
-                'delay_days': int(total_delay * 0.3),
-                'drivers': ['Permit modifications', 'Final inspections']
-            }
-            
-            self.phase_delays[idx] = phases
-        
-        print(f"  ✓ Analyzed {len(self.phase_delays)} project phases")
-    
+        """Feature engineering for core project delays."""
+        # Calculate actual delay in days
+        self.df["calculated_delay_days"] = (
+            pd.to_datetime(self.df["actual_end_date"]) - 
+            pd.to_datetime(self.df["planned_end_date"])
+        ).dt.days.clip(lower=0)
+
+        # Crew efficiency metric
+        self.df["crew_efficiency"] = (
+            self.df["total_labor_hours"] / (self.df["crew_size_avg"] + 1)
+        ).round(2)
+
+        # Delay risk composite index
+        self.df["delay_risk_index"] = (
+            0.5 * self.df["equipment_downtime_hours"] / (self.df["crew_size_avg"] + 1)
+            + 0.001 * self.df["total_labor_hours"]
+        ).round(2)
+
     def _encode_categoricals(self):
-        """Encode categorical variables."""
-        categorical_cols = self.df.select_dtypes(include=['object', 'category']).columns.tolist()
-        
-        for col in categorical_cols:
-            if col in self.df.columns and self.df[col].notna().any():
+        """Encode categorical columns for machine learning."""
+        cat_cols = ["project_type", "location"]
+        for col in cat_cols:
+            if col in self.df.columns:
                 le = LabelEncoder()
-                self.df[f'{col}_encoded'] = le.fit_transform(self.df[col].fillna('Unknown'))
+                self.df[f"{col}_enc"] = le.fit_transform(self.df[col].fillna("Unknown"))
                 self.encoders[col] = le
-    
+
     def _scale_features(self):
-        """Scale numerical features."""
-        numeric_cols = [
-            'crew_size', 'rain_days', 'material_delay_days', 'inspections',
-            'supplier_reliability', 'weather_severity', 'planned_duration'
-        ]
-        
-        for col in numeric_cols:
+        """Standardize numeric features for modeling."""
+        num_cols = ["crew_size_avg", "equipment_downtime_hours", "total_labor_hours"]
+        for col in num_cols:
             if col in self.df.columns:
                 scaler = StandardScaler()
-                self.df[f'{col}_scaled'] = scaler.fit_transform(self.df[[col]].fillna(0))
+                self.df[f"{col}_scaled"] = scaler.fit_transform(self.df[[col]])
                 self.scalers[col] = scaler
-    
+
     def _select_features(self):
-        """Select features for modeling."""
-        feature_cols = []
-        feature_cols.extend([col for col in self.df.columns if col.endswith('_scaled')])
-        feature_cols.extend([col for col in self.df.columns if col.endswith('_encoded')])
-        
-        engineered = [
-            'weather_impact_ratio', 'material_risk_score', 'crew_efficiency_score',
-            'total_external_delays', 'worker_shortage_risk'
+        """Select final feature set for modeling."""
+        self.feature_names = [
+            "crew_size_avg_scaled",
+            "equipment_downtime_hours_scaled",
+            "total_labor_hours_scaled",
+            "crew_efficiency",
+            "delay_risk_index"
         ]
-        feature_cols.extend([col for col in engineered if col in self.df.columns])
-        
-        feature_cols = [col for col in feature_cols if 'project_delay' not in col]
-        
-        self.X = self.df[feature_cols].fillna(0)
-        self.feature_names = feature_cols
-        
-        if 'project_delay_days' in self.df.columns:
-            self.y = self.df['project_delay_days'].fillna(0)
-        else:
-            self.y = None
-    
+        self.X = self.df[self.feature_names]
+        self.y = self.df["calculated_delay_days"]
+
     def get_features(self):
-        """Return features and target."""
-        if self.y is not None:
-            return self.X, self.y
-        return self.X
-    
-    def get_phase_analysis(self, project_idx):
-        """Get detailed phase breakdown for a project."""
-        return self.phase_delays.get(project_idx, {})
-    
+        """Return feature matrix and target variable."""
+        return self.X, self.y
+
     def get_all_phase_analysis(self):
-        """Get phase analysis for all projects."""
-        return self.phase_delays
+        """
+        Generate phase-level delay analysis for all projects.
+        
+        Returns:
+            dict: Phase analysis indexed by project with delay breakdowns
+        """
+        if self.df is None or self.df.empty:
+            return {}
 
-
-class EnhancedCostEngine:
-    """
-    Enhanced Cost Analysis Engine with Category Breakdown + Worker Optimization
-    
-    Outputs:
-    - Total cost impact
-    - Breakdown by category (labor, materials, permits)
-    - Worker allocation cost/benefit
-    - Cost driver analysis
-    """
-    
-    def __init__(self):
-        self.scalers = {}
-        self.encoders = {}
-        self.feature_names = []
-        self.cost_breakdown = {}
-        self.worker_optimization = {}
-    
-    def process(self, standardized_df):
-        """Process data and create cost analysis with breakdowns."""
-        print("\n" + "💰 "+"="*68)
-        print("ENHANCED COST ENGINE - Category Breakdown + Worker Analysis")
-        print("="*70)
+        phase_analysis = {}
         
-        self.df = standardized_df.copy()
-        
-        self._create_cost_features()
-        self._analyze_cost_categories()
-        self._analyze_worker_allocation()
-        self._encode_categoricals()
-        self._scale_features()
-        self._select_features()
-        
-        print("="*70)
-        print(f"✅ Cost engine complete - {self.X.shape[1]} features + cost breakdown")
-        print("="*70)
-        
-        return self
-    
-    def _create_cost_features(self):
-        """Create cost-specific features."""
-        print("\n📊 Engineering cost features...")
-        
-        # Cost per day
-        if 'planned_cost' in self.df.columns and 'planned_duration' in self.df.columns:
-            self.df['cost_per_day'] = self.df['planned_cost'] / (self.df['planned_duration'] + 1)
-        
-        # Delay cost impact
-        if 'project_delay_days' in self.df.columns and 'planned_cost' in self.df.columns:
-            self.df['delay_cost_factor'] = (
-                1 + (self.df['project_delay_days'] / self.df['planned_duration']) * 0.5
-            )
-        
-        # Material cost risk
-        if 'material_delay_days' in self.df.columns:
-            self.df['material_cost_risk'] = self.df['material_delay_days'] * 0.02
-        
-        # Labor cost index
-        if 'crew_size' in self.df.columns and 'planned_duration' in self.df.columns:
-            self.df['labor_cost_index'] = self.df['crew_size'] * self.df['planned_duration']
-        
-        # Worker cost per day
-        if 'crew_size' in self.df.columns:
-            self.df['daily_labor_cost'] = self.df['crew_size'] * 250  # $250/worker/day avg
-        
-        print(f"  ✓ Created cost-specific features")
-    
-    def _analyze_cost_categories(self):
-        """Break down costs by category."""
-        print("\n🔍 Analyzing cost categories...")
-        
-        for idx in self.df.index:
-            planned_cost = self.df.loc[idx, 'planned_cost'] if 'planned_cost' in self.df.columns else 0
-            actual_cost = self.df.loc[idx, 'actual_cost'] if 'actual_cost' in self.df.columns else planned_cost
-            total_overrun = actual_cost - planned_cost
+        for idx, row in self.df.iterrows():
+            delay = row.get('calculated_delay_days', 0)
+            crew_size = row.get('crew_size_avg', 20)
+            equipment_downtime = row.get('equipment_downtime_hours', 0)
             
-            # Estimate breakdown
-            delay_days = self.df.loc[idx, 'project_delay_days'] if 'project_delay_days' in self.df.columns else 0
-            crew_size = self.df.loc[idx, 'crew_size'] if 'crew_size' in self.df.columns else 25
-            material_delay = self.df.loc[idx, 'material_delay_days'] if 'material_delay_days' in self.df.columns else 0
+            # Distribute delays across construction phases based on historical patterns
+            # These ratios are industry averages that would be refined with real data
+            foundation_delay = delay * 0.25
+            framing_delay = delay * 0.40  
+            finishing_delay = delay * 0.35
             
-            # Labor overruns (60% of typical overrun)
-            labor_overrun = int(total_overrun * 0.6)
-            extended_timeline_cost = int(delay_days * crew_size * 250)
-            overtime_cost = labor_overrun - extended_timeline_cost
+            # Identify primary delay drivers based on project characteristics
+            drivers = []
+            if equipment_downtime > 20:
+                drivers.append("Equipment availability and downtime")
+            if crew_size < 15:
+                drivers.append("Insufficient labor resources")
+            if delay > 15:
+                drivers.append("Material delivery and procurement delays")
+            if not drivers:
+                drivers.append("Normal project schedule variance")
             
-            # Materials (30% of typical overrun)
-            material_overrun = int(total_overrun * 0.3)
-            price_increase = int(material_overrun * 0.7)
-            rush_fees = int(material_overrun * 0.3)
-            
-            # Permits/Admin (10%)
-            admin_overrun = int(total_overrun * 0.1)
-            
-            self.cost_breakdown[idx] = {
-                'total_overrun': total_overrun,
-                'labor': {
-                    'total': labor_overrun,
-                    'extended_timeline': extended_timeline_cost,
-                    'overtime': max(0, overtime_cost)
+            phase_analysis[idx] = {
+                'foundation': {
+                    'delay_days': round(foundation_delay, 1),
+                    'drivers': [drivers[0]] if drivers else ["Site conditions and weather"]
                 },
-                'materials': {
-                    'total': material_overrun,
-                    'price_increases': price_increase,
-                    'rush_delivery': rush_fees
+                'framing': {
+                    'delay_days': round(framing_delay, 1),
+                    'drivers': drivers[:2] if len(drivers) > 1 else drivers
                 },
-                'admin': {
-                    'total': admin_overrun,
-                    'permit_mods': int(admin_overrun * 0.8),
-                    'fees': int(admin_overrun * 0.2)
+                'finishing': {
+                    'delay_days': round(finishing_delay, 1),
+                    'drivers': [drivers[-1]] if drivers else ["Inspection scheduling"]
                 }
             }
-        
-        print(f"  ✓ Analyzed cost breakdown for {len(self.cost_breakdown)} projects")
-    
-    def _analyze_worker_allocation(self):
-        """Analyze worker allocation optimization."""
-        print("\n👷 Analyzing worker allocation...")
-        
-        for idx in self.df.index:
-            crew_size = self.df.loc[idx, 'crew_size'] if 'crew_size' in self.df.columns else 25
-            planned_duration = self.df.loc[idx, 'planned_duration'] if 'planned_duration' in self.df.columns else 100
-            delay_days = self.df.loc[idx, 'project_delay_days'] if 'project_delay_days' in self.df.columns else 0
-            
-            # Calculate optimal allocation
-            phases = {
-                'early': {'current': crew_size, 'optimal': max(12, crew_size - 3)},
-                'critical': {'current': crew_size, 'optimal': crew_size + 7},
-                'finishing': {'current': crew_size, 'optimal': crew_size + 3}
-            }
-            
-            # Cost/benefit analysis
-            additional_labor_cost = 7 * 250 * (planned_duration // 3)  # 7 workers for 1/3 project
-            delay_cost_saved = delay_days * crew_size * 250 * 0.5  # Save 50% of delays
-            net_savings = delay_cost_saved - additional_labor_cost
-            
-            self.worker_optimization[idx] = {
-                'phases': phases,
-                'additional_cost': additional_labor_cost,
-                'savings': delay_cost_saved,
-                'net_benefit': net_savings,
-                'recommendation': 'increase_critical_phase' if net_savings > 0 else 'maintain_current'
-            }
-        
-        print(f"  ✓ Optimized worker allocation for {len(self.worker_optimization)} projects")
-    
+
+        print("Phase-level delay analysis completed.")
+        return phase_analysis
+
+
+class CostEngineV2:
+    """
+    Cost overrun prediction engine for construction projects.
+    Analyzes budget vs actual costs to identify overrun patterns.
+    """
+
+    def __init__(self):
+        self.scalers = {}
+        self.encoders = {}
+        self.feature_names = []
+        self.df = None
+
+    def process(self, df):
+        """Process input dataframe and prepare cost features."""
+        print("\n" + "=" * 60)
+        print("COST ENGINE V2 - Core Cost Prediction")
+        print("=" * 60)
+
+        self.df = df.copy()
+        self._create_cost_features()
+        self._encode_categoricals()
+        self._scale_features()
+        self._select_features()
+
+        print(f"Cost engine processed {self.df.shape[0]} projects")
+        return self
+
+    def _create_cost_features(self):
+        """Engineer cost-related features."""
+        # Calculate actual cost overrun percentage
+        self.df["actual_overrun_percent"] = (
+            (self.df["actual_cost"] - self.df["estimated_cost"]) / 
+            self.df["estimated_cost"]
+        ) * 100
+
+        # Predicted overrun based on project characteristics
+        self.df["predicted_overrun_percent"] = (
+            0.3 * self.df["calculated_delay_days"]
+            + 0.1 * self.df["equipment_downtime_hours"]
+            - 0.05 * self.df["crew_size_avg"]
+        ).round(2)
+
     def _encode_categoricals(self):
         """Encode categorical variables."""
-        categorical_cols = self.df.select_dtypes(include=['object', 'category']).columns.tolist()
-        
-        for col in categorical_cols:
-            if col in self.df.columns and self.df[col].notna().any():
+        cat_cols = ["project_type", "location"]
+        for col in cat_cols:
+            if col in self.df.columns:
                 le = LabelEncoder()
-                self.df[f'{col}_encoded'] = le.fit_transform(self.df[col].fillna('Unknown'))
+                self.df[f"{col}_enc"] = le.fit_transform(self.df[col].fillna("Unknown"))
                 self.encoders[col] = le
-    
+
     def _scale_features(self):
-        """Scale numerical features."""
-        numeric_cols = [
-            'planned_cost', 'planned_duration', 'crew_size', 'supplier_reliability',
-            'rain_days', 'material_delay_days', 'project_delay_days'
-        ]
-        
-        for col in numeric_cols:
+        """Standardize numeric features."""
+        num_cols = ["estimated_cost", "actual_cost", "crew_size_avg", "equipment_downtime_hours"]
+        for col in num_cols:
             if col in self.df.columns:
                 scaler = StandardScaler()
-                self.df[f'{col}_scaled'] = scaler.fit_transform(self.df[[col]].fillna(0))
+                self.df[f"{col}_scaled"] = scaler.fit_transform(self.df[[col]])
                 self.scalers[col] = scaler
-    
+
     def _select_features(self):
-        """Select features for modeling."""
-        feature_cols = []
-        feature_cols.extend([col for col in self.df.columns if col.endswith('_scaled')])
-        feature_cols.extend([col for col in self.df.columns if col.endswith('_encoded')])
-        
-        engineered = [
-            'cost_per_day', 'delay_cost_factor', 'material_cost_risk',
-            'labor_cost_index', 'daily_labor_cost'
+        """Select final feature set."""
+        self.feature_names = [
+            "estimated_cost_scaled",
+            "actual_cost_scaled",
+            "crew_size_avg_scaled",
+            "equipment_downtime_hours_scaled",
+            "predicted_overrun_percent"
         ]
-        feature_cols.extend([col for col in engineered if col in self.df.columns])
-        
-        feature_cols = [col for col in feature_cols 
-                       if not any(x in col for x in ['actual_cost', 'cost_overrun'])]
-        
-        self.X = self.df[feature_cols].fillna(0)
-        self.feature_names = feature_cols
-        
-        if 'cost_overrun' in self.df.columns:
-            self.y = self.df['cost_overrun'].fillna(0)
-        elif 'actual_cost' in self.df.columns:
-            self.y = self.df['actual_cost'].fillna(0)
-        else:
-            self.y = None
-    
+        self.X = self.df[self.feature_names]
+        self.y = self.df["actual_overrun_percent"]
+
     def get_features(self):
-        """Return features and target."""
-        if self.y is not None:
-            return self.X, self.y
-        return self.X
-    
-    def get_cost_breakdown(self, project_idx):
-        """Get detailed cost breakdown for a project."""
-        return self.cost_breakdown.get(project_idx, {})
-    
-    def get_worker_optimization(self, project_idx):
-        """Get worker allocation analysis for a project."""
-        return self.worker_optimization.get(project_idx, {})
-    
+        """Return feature matrix and target variable."""
+        return self.X, self.y
+
     def get_all_cost_breakdowns(self):
-        """Get cost breakdowns for all projects."""
-        return self.cost_breakdown
-    
+        """
+        Generate detailed cost breakdowns for all projects.
+        
+        Returns:
+            dict: Cost breakdowns indexed by project
+        """
+        if self.df is None or self.df.empty:
+            return {}
+
+        cost_breakdowns = {}
+        
+        for idx, row in self.df.iterrows():
+            estimated = row.get('estimated_cost', 1000000)
+            actual = row.get('actual_cost', estimated)
+            overrun = actual - estimated
+            delay_days = row.get('calculated_delay_days', 0)
+            
+            # Industry-standard cost distribution percentages
+            labor_pct = 0.45
+            materials_pct = 0.40
+            admin_pct = 0.15
+            
+            # Distribute overruns based on typical construction cost patterns
+            labor_overrun = overrun * 0.50
+            materials_overrun = overrun * 0.35
+            admin_overrun = overrun * 0.15
+            
+            cost_breakdowns[idx] = {
+                'labor': {
+                    'total': int(estimated * labor_pct + labor_overrun),
+                    'extended_timeline': int(delay_days * 500),
+                    'overtime': int(labor_overrun * 0.60)
+                },
+                'materials': {
+                    'total': int(estimated * materials_pct + materials_overrun),
+                    'price_increases': int(materials_overrun * 0.70),
+                    'rush_delivery': int(materials_overrun * 0.30)
+                },
+                'admin': {
+                    'total': int(estimated * admin_pct + admin_overrun)
+                }
+            }
+
+        print("Cost breakdown analysis completed.")
+        return cost_breakdowns
+
     def get_all_worker_optimizations(self):
-        """Get worker optimizations for all projects."""
-        return self.worker_optimization
+        """
+        Generate worker allocation optimization recommendations.
+        
+        Returns:
+            dict: Optimization recommendations indexed by project
+        """
+        if self.df is None or self.df.empty:
+            return {}
+
+        worker_optimizations = {}
+        
+        for idx, row in self.df.iterrows():
+            current_crew = int(row.get('crew_size_avg', 20))
+            delay_days = row.get('calculated_delay_days', 0)
+            estimated_cost = row.get('estimated_cost', 1000000)
+            
+            # Calculate optimal crew size based on delay patterns
+            if delay_days > 15:
+                optimal_crew = int(current_crew * 1.25)
+                potential_delay_reduction = delay_days * 0.40
+            elif delay_days > 7:
+                optimal_crew = int(current_crew * 1.15)
+                potential_delay_reduction = delay_days * 0.25
+            else:
+                optimal_crew = current_crew
+                potential_delay_reduction = 0
+            
+            # Calculate financial impact
+            additional_workers = optimal_crew - current_crew
+            additional_cost = additional_workers * 80 * 8 * 30  # $80/hr * 8hrs * 30 days
+            
+            # Estimated savings from reduced delays
+            delay_cost_per_day = estimated_cost * 0.002
+            savings = potential_delay_reduction * delay_cost_per_day
+            
+            net_benefit = savings - additional_cost
+            
+            worker_optimizations[idx] = {
+                'phases': {
+                    'critical': {
+                        'current': current_crew,
+                        'optimal': optimal_crew
+                    }
+                },
+                'net_benefit': int(net_benefit),
+                'additional_cost': int(additional_cost),
+                'savings': int(savings)
+            }
+
+        print("Worker optimization analysis completed.")
+        return worker_optimizations
+
+
+if __name__ == "__main__":
+    print("\nTesting DelayEngineV2 and CostEngineV2...")
+
+    sample_data = {
+        "project_id": [1, 2, 3],
+        "planned_end_date": ["2024-01-01", "2024-02-01", "2024-03-01"],
+        "actual_end_date": ["2024-01-10", "2024-02-05", "2024-03-20"],
+        "estimated_cost": [1000000, 800000, 1200000],
+        "actual_cost": [1100000, 820000, 1300000],
+        "crew_size_avg": [25, 15, 35],
+        "equipment_downtime_hours": [10, 60, 25],
+        "total_labor_hours": [1000, 800, 1500],
+        "project_type": ["Residential", "Commercial", "Infrastructure"],
+        "location": ["NYC", "Boston", "Chicago"]
+    }
+
+    df = pd.DataFrame(sample_data)
+
+    delay_engine = DelayEngineV2().process(df)
+    cost_engine = CostEngineV2().process(df)
+
+    # Test all methods
+    X_delay, y_delay = delay_engine.get_features()
+    X_cost, y_cost = cost_engine.get_features()
+    
+    phase_analysis = delay_engine.get_all_phase_analysis()
+    cost_breakdowns = cost_engine.get_all_cost_breakdowns()
+    worker_opts = cost_engine.get_all_worker_optimizations()
+    
+    print("\nAll methods working successfully!")
+    print(f"\nPhase Analysis Keys: {list(phase_analysis.keys())}")
+    print(f"Cost Breakdown Keys: {list(cost_breakdowns.keys())}")
+    print(f"Worker Optimization Keys: {list(worker_opts.keys())}")
