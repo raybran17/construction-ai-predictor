@@ -9,7 +9,6 @@ import sys
 import os
 from datetime import datetime
 import json
-import io
 
 # Import YOUR actual systems
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -528,12 +527,17 @@ def main():
     )
     
     st.markdown("### Project Details")
-    location = st.selectbox(
-        "Project Location",
-        ["New York", "California", "Oregon", "Texas", "Florida", "Other"]
-    )
-    if location == "Other":
-        location = st.text_input("Enter custom location", value="")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        project_budget = st.number_input("Project Budget ($)", min_value=100000, value=500000, step=50000)
+    with col2:
+        location = st.selectbox(
+            "Project Location / Corridor",
+            ["New York", "California", "Oregon", "Texas", "Florida", "Other"]
+        )
+        if location == "Other":
+            location = st.text_input("Enter custom location")
     
     if uploaded_file is not None:
         st.success(f"File: {uploaded_file.name}")
@@ -606,6 +610,7 @@ def main():
                     project_data = {
                         "name": f"Project - {location}",
                         "location": location,
+                        "budget": project_budget,
                         "uploaded_date": datetime.now().isoformat(),
                         "delay_prediction": report['summary']['delay_days'],
                         "cost_overrun_prediction": report['summary']['cost_overrun_pct']
