@@ -1,46 +1,47 @@
 """
-Construction AI Predictor - Production Ready
-Uses YOUR trained models + ExecutiveSummary for real recommendations
+Construction AI Predictor - Final Production Version
+Uses trained models + Claude AI for intelligent recommendations
 """
 
 import streamlit as st
 import pandas as pd
 import io
 import os
-from datetime import datetime
 import json
+from datetime import datetime
+import anthropic
 
 # Import your engines
 from delay_cost_engines import DelayEngineV2, CostEngineV2
 from integrated_master_pipeline import IntegratedMasterPipeline
 from flexible_column_mapper import FlexibleColumnMapper
-from executive_summary import ExecutiveSummary
 
 # Page config
 st.set_page_config(page_title="Construction AI Predictor", layout="wide")
 
-# Professional CSS
+# Professional CSS - DARK TEXT FOR READABILITY
 st.markdown("""
 <style>
     * { margin: 0; padding: 0; }
     body { background-color: #ffffff; }
     
     .main-title { font-size: 2.8rem; font-weight: 600; color: #1a1a1a; margin-bottom: 0.5rem; }
-    .subtitle { font-size: 0.95rem; color: #666666; margin-bottom: 2rem; }
+    .subtitle { font-size: 0.95rem; color: #333333; margin-bottom: 2rem; }
     
     .section-header { font-size: 1.5rem; font-weight: 600; color: #1a1a1a; margin: 2rem 0 1rem 0; }
     .divider { border-bottom: 1px solid #e8e8e8; margin: 2rem 0; }
     
     .metric-card { background: #ffffff; border: 1px solid #e8e8e8; border-radius: 10px; padding: 1.5rem; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .metric-value { font-size: 2rem; font-weight: 600; color: #1a1a1a; margin: 0.5rem 0; }
-    .metric-label { font-size: 0.85rem; color: #888888; text-transform: uppercase; letter-spacing: 0.6px; }
+    .metric-label { font-size: 0.85rem; color: #666666; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 500; }
     
     .issue-box { background-color: #fef9f0; border-left: 4px solid #d4a574; padding: 1rem; margin: 0.8rem 0; border-radius: 6px; }
     .warning-icon { color: #d4a574; font-weight: 600; margin-right: 0.5rem; }
+    .issue-text { color: #333333; font-size: 0.95rem; }
     
-    .action-box { background-color: #ffffff; border: 1px solid #e0e0e0; padding: 1rem; margin: 0.8rem 0; border-radius: 6px; }
-    .action-title { font-weight: 600; color: #1a1a1a; }
-    .action-content { color: #555555; font-size: 0.95rem; margin-top: 0.5rem; line-height: 1.6; }
+    .recommendation-box { background-color: #ffffff; border: 1px solid #e0e0e0; padding: 1.2rem; margin: 0.8rem 0; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .rec-title { font-weight: 600; color: #1a1a1a; font-size: 1rem; margin-bottom: 0.5rem; }
+    .rec-text { color: #333333; font-size: 0.95rem; line-height: 1.6; }
     
     .stButton button { border-radius: 6px; font-weight: 500; }
 </style>
@@ -105,17 +106,15 @@ class AuthManager:
 
 
 # =====================================================================
-# ANALYSIS & DISPLAY
+# ANALYSIS & CLAUDE AI
 # =====================================================================
 
-def analyze_project(df, parameters):
-    """Analyze project and return structured results."""
+def analyze_project(df):
+    """Analyze project with trained models."""
     try:
-        # Map columns
         mapper = FlexibleColumnMapper()
         df_mapped, _ = mapper.map_dataframe(df, verbose=False)
         
-        # Process through engines
         delay_engine = DelayEngineV2()
         cost_engine = CostEngineV2()
         
@@ -126,7 +125,6 @@ def analyze_project(df, parameters):
         X_delay, y_delay = delay_engine.get_features()
         X_cost, y_cost = cost_engine.get_features()
         
-        # Train models
         pipeline = IntegratedMasterPipeline()
         pipeline.train_delay_model(X_delay, y_delay)
         pipeline.train_cost_model(X_cost, y_cost)
@@ -134,27 +132,58 @@ def analyze_project(df, parameters):
         
         report = pipeline.get_project_report(0)
         
-        return True, report, pipeline, delay_engine, cost_engine
+        return True, report, delay_engine, cost_engine
     
     except Exception as e:
-        return False, str(e), None, None, None
+        return False, str(e), None, None
 
 
-def display_results(report, delay_engine, cost_engine):
-    """Display analysis results with ExecutiveSummary recommendations based on REAL project data."""
+def get_claude_recommendations(report, delay_engine):
+    """Get intelligent recommendations from Claude based on real project data."""
+    try:
+        # Get first project's actual data
+        if delay_engine.df is None or len(delay_engine.df) == 0:
+            return "No project data available for recommendations."
+        
+        project = delay_engine.df.iloc[0]
+        
+        prompt = f"""You are a construction project expert. Based on this project analysis, provide 3-4 specific, actionable recommendations.
+
+PROJECT DATA:
+- Type: {project.get('project_type', 'Unknown')}
+- Location: {project.get('location', 'Unknown')}
+- Predicted Delay: {report['summary']['delay_days']:.1f} days
+- Cost Overrun: {report['summary']['cost_overrun_pct']:.1f}%
+- Risk Level: {report['summary']['risk_level']}
+- Crew Size: {int(project.get('crew_size_avg', 0))} workers
+- Equipment Downtime: {int(project.get('equipment_downtime_hours', 0))} hours
+
+Provide specific, actionable recommendations that:
+1. Address the identified risks
+2. Include concrete action items with expected impact
+3. Mention timeline and cost implications
+4. Are tailored to this specific project type and location
+
+Format as numbered list with bold action titles."""
+
+        client = anthropic.Anthropic()
+        
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        return message.content[0].text
     
-    st.markdown('<div class="section-header">Analysis Results</div>', unsafe_allow_html=True)def display_results(report, delay_engine, cost_engine):
-    """Display analysis results with ExecutiveSummary recommendations based on REAL project data."""
+    except Exception as e:
+        return f"Could not generate AI recommendations: {str(e)}"
+
+
+def display_results(report, delay_engine):
+    """Display analysis results with Claude recommendations."""
     
     st.markdown('<div class="section-header">Analysis Results</div>', unsafe_allow_html=True)
-    
-    # DEBUG - Add these lines:
-    st.write("DEBUG - delay_engine.df:", delay_engine.df.shape if delay_engine.df is not None else "None")
-    if delay_engine.df is not None and len(delay_engine.df) > 0:
-        st.write("DEBUG - First project type:", delay_engine.df.iloc[0].get('project_type'))
-        st.write("DEBUG - First project location:", delay_engine.df.iloc[0].get('location'))
-    
-    # Rest of function continues...
     
     # Key metrics
     col1, col2, col3 = st.columns(3)
@@ -179,51 +208,7 @@ def display_results(report, delay_engine, cost_engine):
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # Extract REAL project data from analyzed dataframes
-    try:
-        # Get first project's actual data from the analyzed engines
-        if delay_engine.df is not None and len(delay_engine.df) > 0:
-            project_row = delay_engine.df.iloc[0]
-            
-            # Build project_data from REAL CSV analysis
-            project_data = {
-                'project_type': project_row.get('project_type', 'Unknown'),
-                'location': project_row.get('location', 'Unknown'),
-                'estimated_cost': float(project_row.get('estimated_cost', 0)),
-                'actual_cost': float(project_row.get('actual_cost', 0)),
-                'crew_size_avg': int(project_row.get('crew_size_avg', 20)),
-                'equipment_downtime_hours': float(project_row.get('equipment_downtime_hours', 0)),
-                'total_labor_hours': float(project_row.get('total_labor_hours', 0))
-            }
-        else:
-            project_data = {'project_type': 'Unknown', 'location': 'Unknown', 'estimated_cost': 0, 'crew_size_avg': 20, 'equipment_downtime_hours': 0}
-        
-        # Get phase and cost analysis
-        phase_analysis = delay_engine.get_all_phase_analysis() if hasattr(delay_engine, 'get_all_phase_analysis') else {}
-        cost_breakdown = cost_engine.get_all_cost_breakdowns() if hasattr(cost_engine, 'get_all_cost_breakdowns') else {}
-        
-        # Get first project's analysis
-        phase_data = phase_analysis.get(0, {})
-        cost_data = cost_breakdown.get(0, {})
-        
-        # Create ExecutiveSummary with REAL data
-        exec_summary = ExecutiveSummary(
-            project_data=project_data,
-            delay_pred=report['summary']['delay_days'],
-            cost_pred=report['summary']['cost_overrun_pct'],
-            phase_analysis=phase_data,
-            cost_breakdown=cost_data
-        )
-        
-        summary_dict = exec_summary.export_to_dict()
-        risks = summary_dict.get('top_risks', [])
-        actions = summary_dict.get('recommended_actions', [])
-    except Exception as e:
-        st.warning(f"Could not generate ExecutiveSummary: {str(e)}")
-        risks = []
-        actions = []
-    
-    # Issues and Recommendations
+    # Issues section
     col1, col2 = st.columns(2)
     
     with col1:
@@ -234,53 +219,30 @@ def display_results(report, delay_engine, cost_engine):
         
         if delay > 5:
             st.markdown("""<div class="issue-box">
-                <span class="warning-icon">⚠</span> Schedule Risk
-                <div class="action-content">Delays detected in project timeline</div>
+                <span class="warning-icon">⚠</span>
+                <div class="issue-text"><strong>Schedule Risk</strong><br>Delays detected in project timeline</div>
             </div>""", unsafe_allow_html=True)
         
         if cost > 5:
             st.markdown("""<div class="issue-box">
-                <span class="warning-icon">⚠</span> Budget Risk
-                <div class="action-content">Cost overruns identified</div>
+                <span class="warning-icon">⚠</span>
+                <div class="issue-text"><strong>Budget Risk</strong><br>Cost overruns identified</div>
             </div>""", unsafe_allow_html=True)
         
         if delay <= 5 and cost <= 5:
             st.markdown("""<div class="issue-box">
-                <span class="warning-icon">✓</span> On Track
-                <div class="action-content">Project within acceptable parameters</div>
+                <span class="warning-icon">✓</span>
+                <div class="issue-text"><strong>On Track</strong><br>Project within acceptable parameters</div>
             </div>""", unsafe_allow_html=True)
-        
-        # Top Risks
-        if risks:
-            st.markdown("### Top Risks")
-            for risk in risks[:3]:
-                st.markdown(f"""<div class="action-box">
-                    <div class="action-title">{risk['title']}</div>
-                    <div class="action-content">
-                        Probability: {risk['probability']}%<br>
-                        Impact: {risk['impact']}<br>
-                        Financial Exposure: ${risk['cost']:,.0f}<br>
-                        <strong>Action:</strong> {risk['action']}
-                    </div>
-                </div>""", unsafe_allow_html=True)
     
     with col2:
-        st.markdown("### AI-Recommended Actions")
+        st.markdown("### AI-Generated Recommendations")
         
-        if actions:
-            for action in actions[:3]:
-                priority_color = "#d4a574" if action['priority'] == 'CRITICAL' else "#4a90a4"
-                st.markdown(f"""<div class="action-box" style="border-left: 4px solid {priority_color};">
-                    <div class="action-title">[{action['priority']}] {action['title']}</div>
-                    <div class="action-content">
-                        Investment: ${action['cost']:,.0f}<br>
-                        Potential Savings: ${action['saves']:,.0f}<br>
-                        Time Saved: {action['time_saved']} days<br>
-                        ROI: {action['roi']}
-                    </div>
-                </div>""", unsafe_allow_html=True)
-        else:
-            st.info("No specific actions needed at this time.")
+        with st.spinner("Generating intelligent recommendations..."):
+            recommendations = get_claude_recommendations(report, delay_engine)
+            st.markdown(f"""<div class="recommendation-box">
+                <div class="rec-text">{recommendations}</div>
+            </div>""", unsafe_allow_html=True)
 
 
 # =====================================================================
@@ -406,11 +368,11 @@ def main():
             
             if st.button("Analyze Project", type="primary", use_container_width=True):
                 with st.spinner("Analyzing with your trained models..."):
-                    success, result, pipeline, delay_engine, cost_engine = analyze_project(df, {})
+                    success, result, delay_engine, cost_engine = analyze_project(df)
                     
                     if success:
                         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-                        display_results(result, delay_engine, cost_engine)
+                        display_results(result, delay_engine)
                         
                         with st.expander("View raw data (first 10 rows)"):
                             st.dataframe(df.head(10))
